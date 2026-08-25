@@ -1,0 +1,12 @@
+[
+  { "name": "JustC",              "email": "justcmanager@snoonu.com",              "password": "ضع_الباسورد_هنا" },
+  { "name": "Chili Pepper",       "email": "chilipeppermanager@snoonu.com",        "password": "ضع_الباسورد_هنا" },
+  { "name": "Pattie Pattie",      "email": "pattiepattieslidersmanager@snoonu.com", "password": "ضع_الباسورد_هنا" },
+  { "name": "BBT",                "email": "bbtmanager@snoonu.com",                "password": "ضع_الباسورد_هنا" },
+  { "name": "Shawarma Shakir",    "email": "shawarmashakirmanager@snoonu.com",     "password": "ضع_الباسورد_هنا" },
+  { "name": "Yelo Pizza",         "email": "yelopizzamanager@snoonu.com",          "password": "ضع_الباسورد_هنا" },
+  { "name": "Forever More",       "email": "forevermoremanager@snoonu.com",        "password": "ضع_الباسورد_هنا" },
+  { "name": "Mishmash",           "email": "mishmashmanager@snoonu.com",           "password": "ضع_الباسورد_هنا" },
+  { "name": "Slice Doner",        "email": "slicedonermanager@snoonu.com",         "password": "ضع_الباسورد_هنا" },
+  { "name": "Tabel",              "email": "tabelmanager@snoonu.com",              "password": "ضع_الباسورد_هنا" }
+]

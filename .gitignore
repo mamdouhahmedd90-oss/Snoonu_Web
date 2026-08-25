@@ -1,0 +1,9 @@
+node_modules/
+.env
+auth/
+data/
+brands.json
+snoonu_brands.txt
+session_b64.txt
+logs/
+*.log
