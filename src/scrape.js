@@ -1,18 +1,19 @@
 'use strict';
 const config = require('./config');
 const store = require('./store');
-const { login, fetchOrdersPage } = require('./snoonu');
+const { getAuth, fetchOrdersPage } = require('./snoonu');
 const { extractOrders } = require('./extract');
 
 function log(...a) { console.log(`[${new Date().toISOString()}]`, ...a); }
 
 async function scrapeBrand(brand) {
   const recs = [];
-  let token, businessUnitId;
+  let token, businessUnitId, cached;
   try {
-    const auth = await login(brand);
+    const auth = await getAuth(brand);
     token = auth.token;
     businessUnitId = auth.businessUnitId;
+    cached = auth.cached;
   } catch (e) {
     log(`  ✗ ${brand.name}: ${e.message}`);
     return { brand: brand.name, records: [], ok: false };
@@ -32,7 +33,7 @@ async function scrapeBrand(brand) {
     if (data.length < config.pageSize) break; // آخر صفحة
     await new Promise((r) => setTimeout(r, 250));
   }
-  log(`  ✓ ${brand.name}: ${recs.length} رقم (من ${pages + 1} صفحة)`);
+  log(`  ✓ ${brand.name}: ${recs.length} رقم (${pages + 1} صفحة)${cached ? ' [توكن مخزّن]' : ' [دخول جديد]'}`);
   return { brand: brand.name, records: recs, ok: true };
 }
 

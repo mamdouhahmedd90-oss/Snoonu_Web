@@ -63,6 +63,31 @@ async function login(brand) {
   throw new Error(`فشل دخول ${brand.name} (${brand.email}): ${msg}`);
 }
 
+// كاش للتوكن لكل براند (لتقليل عدد مرات تسجيل الدخول = أهدأ على حماية سنونو)
+const _authCache = new Map();
+
+function tokenExpMs(token, rawExpiration) {
+  const p = jwtPayload(token);
+  if (p && p.exp) return p.exp * 1000;
+  if (rawExpiration) { const t = Date.parse(rawExpiration); if (!Number.isNaN(t)) return t; }
+  return Date.now() + 60 * 60 * 1000;
+}
+
+// يرجّع توكن صالح من الكاش، أو يسجّل دخول جديد فقط لو انتهى/قارب على الانتهاء
+async function getAuth(brand) {
+  const cached = _authCache.get(brand.email);
+  if (cached && Date.now() < cached.expMs - 5 * 60 * 1000) {
+    return { token: cached.token, businessUnitId: cached.businessUnitId, cached: true };
+  }
+  const auth = await login(brand);
+  _authCache.set(brand.email, {
+    token: auth.token,
+    businessUnitId: auth.businessUnitId,
+    expMs: tokenExpMs(auth.token, auth.raw && auth.raw.expiration),
+  });
+  return { ...auth, cached: false };
+}
+
 // جلب صفحة طلبات واحدة
 async function fetchOrdersPage(token, businessUnitId, pageOffset) {
   const params = new URLSearchParams({
@@ -79,4 +104,4 @@ async function fetchOrdersPage(token, businessUnitId, pageOffset) {
   return data;
 }
 
-module.exports = { login, fetchOrdersPage, jwtPayload, findBusinessUnitId };
+module.exports = { login, getAuth, fetchOrdersPage, jwtPayload, findBusinessUnitId };
