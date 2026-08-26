@@ -2,69 +2,74 @@
 const fs = require('fs');
 const XLSX = require('xlsx');
 const config = require('./config');
+const db = require('./db');
 
+const USE_DB = db.isEnabled();
+
+// ---------- أدوات JSON (تُستخدم محلياً عند غياب DATABASE_URL) ----------
 function ensureDirs() {
   for (const d of [config.dataDir, config.rawDir]) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   }
 }
-
-function load() {
+function loadJson() {
   ensureDirs();
   if (!fs.existsSync(config.storePath)) return {};
   try { return JSON.parse(fs.readFileSync(config.storePath, 'utf8')) || {}; }
   catch (e) { console.error('[store] تعذّر قراءة المخزن:', e.message); return {}; }
 }
-
-function save(db) {
-  ensureDirs();
-  fs.writeFileSync(config.storePath, JSON.stringify(db, null, 2), 'utf8');
-}
-
-// المفتاح الفريد = رقم + رقم الطلب (نفس العميل بطلبات مختلفة = صفوف متعددة)
+function saveJson(dbObj) { ensureDirs(); fs.writeFileSync(config.storePath, JSON.stringify(dbObj, null, 2), 'utf8'); }
 function recordKey(rec) {
   const oid = rec.context && rec.context.orderId;
   return oid ? `${rec.phone}|${oid}` : rec.phone;
 }
 
-function upsertMany(records, nowIso) {
-  const db = load();
+async function init() {
+  if (USE_DB) await db.init();
+  else ensureDirs();
+}
+
+async function upsertMany(records, nowIso) {
+  if (USE_DB) return db.upsertMany(records, nowIso);
+  const store = loadJson();
   let added = 0, updated = 0;
   for (const rec of records) {
     const key = recordKey(rec);
-    if (db[key]) {
-      db[key].lastSeen = nowIso;
-      db[key].seenCount = (db[key].seenCount || 1) + 1;
-      db[key].context = { ...db[key].context, ...rec.context };
+    if (store[key]) {
+      store[key].lastSeen = nowIso;
+      store[key].seenCount = (store[key].seenCount || 1) + 1;
+      store[key].context = { ...store[key].context, ...rec.context };
       updated++;
     } else {
-      db[key] = {
-        phone: rec.phone,
-        phoneE164: rec.phoneE164 || '+' + config.countryCode + rec.phone,
-        context: rec.context || {},
-        source: rec.source || '',
-        firstSeen: nowIso,
-        lastSeen: nowIso,
-        seenCount: 1,
-      };
+      store[key] = { phone: rec.phone, phoneE164: rec.phoneE164 || '+' + config.countryCode + rec.phone,
+        context: rec.context || {}, source: rec.source || '', firstSeen: nowIso, lastSeen: nowIso, seenCount: 1 };
       added++;
     }
   }
-  save(db);
-  return { added, updated, total: Object.keys(db).length };
+  saveJson(store);
+  return { added, updated, total: Object.keys(store).length };
 }
 
-// تنسيق وقت ISO ("2026-08-25T14:18:15.1") إلى "2026-08-25 14:18"
+async function allRecords() {
+  if (USE_DB) return db.allRecords();
+  return Object.values(loadJson());
+}
+
+async function count() {
+  if (USE_DB) return db.count();
+  return Object.keys(loadJson()).length;
+}
+
+// تنسيق وقت ISO إلى "YYYY-MM-DD HH:MM"
 function fmtTime(v) {
   if (!v) return '';
-  const s = String(v);
-  const m = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
-  return m ? `${m[1]} ${m[2]}` : s;
+  const m = String(v).match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+  return m ? `${m[1]} ${m[2]}` : String(v);
 }
 
-function contactsRows() {
-  const db = load();
-  const rows = Object.values(db).map((r) => {
+async function contactsRows() {
+  const recs = await allRecords();
+  const rows = recs.map((r) => {
     const c = r.context || {};
     return {
       Phone: r.phone,
@@ -85,32 +90,27 @@ function contactsRows() {
   return rows;
 }
 
-function exportExcel() {
-  const rows = contactsRows();
+async function exportExcel() {
+  const rows = await contactsRows();
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [
-    { wch: 11 }, { wch: 15 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 12 },
-    { wch: 40 }, { wch: 17 }, { wch: 12 }, { wch: 22 }, { wch: 22 }, { wch: 10 },
-  ];
+  ws['!cols'] = [{ wch: 11 }, { wch: 15 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 12 },
+    { wch: 40 }, { wch: 17 }, { wch: 12 }, { wch: 22 }, { wch: 22 }, { wch: 10 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Contacts');
-  try {
-    XLSX.writeFile(wb, config.excelPath);
-    return { file: config.excelPath, count: rows.length };
-  } catch (e) {
+  ensureDirs();
+  try { XLSX.writeFile(wb, config.excelPath); return { file: config.excelPath, count: rows.length }; }
+  catch (e) {
     if (e && (e.code === 'EBUSY' || e.code === 'EPERM')) {
       const alt = config.excelPath.replace(/\.xlsx$/, '_' + Date.now() + '.xlsx');
-      try { XLSX.writeFile(wb, alt); console.warn('[store] الملف مفتوح — حُفظ باسم بديل:', alt); return { file: alt, count: rows.length }; }
-      catch (e2) { console.warn('[store] تعذّر كتابة Excel:', e2.message); return { file: '(فشل — أغلق الملف)', count: rows.length }; }
+      try { XLSX.writeFile(wb, alt); return { file: alt, count: rows.length }; } catch (_) {}
     }
     console.warn('[store] تعذّر كتابة Excel:', e.message);
     return { file: '(فشل)', count: rows.length };
   }
 }
 
-module.exports = { ensureDirs, load, save, upsertMany, exportExcel, contactsRows };
+module.exports = { ensureDirs, init, upsertMany, allRecords, count, contactsRows, exportExcel, usingDb: USE_DB };
 
 if (require.main === module && process.argv.includes('--export')) {
-  const r = exportExcel();
-  console.log(`تم تصدير ${r.count} سجل إلى:\n${r.file}`);
+  exportExcel().then((r) => console.log(`تم تصدير ${r.count} سجل إلى:\n${r.file}`)).catch((e) => console.error(e.message));
 }

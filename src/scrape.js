@@ -37,7 +37,7 @@ async function scrapeBrand(brand) {
 }
 
 async function runOnce() {
-  store.ensureDirs();
+  await store.init();
   if (!config.brands.length) {
     throw new Error('لا توجد بيانات براندات. انسخ brands.example.json إلى brands.json واملأ الباسوردات، أو اضبط SNOONU_BRANDS.');
   }
@@ -52,11 +52,9 @@ async function runOnce() {
   }
 
   const now = new Date().toISOString();
-  const upres = store.upsertMany(all, now);
-  const exp = store.exportExcel();
+  const upres = await store.upsertMany(all, now);
 
-  log(`الإجمالي: براندات ناجحة ${okBrands}/${config.brands.length} | أرقام ملتقطة ${all.length} | جديد ${upres.added} | الإجمالي بالمخزن ${upres.total}`);
-  log('ملف Excel:', exp.file);
+  log(`الإجمالي: براندات ناجحة ${okBrands}/${config.brands.length} | أرقام ملتقطة ${all.length} | جديد ${upres.added} | الإجمالي بالمخزن ${upres.total} | التخزين: ${store.usingDb ? 'Postgres' : 'JSON'}`);
   return { ...upres, okBrands };
 }
 
