@@ -31,7 +31,8 @@ module.exports = {
   headless: String(process.env.HEADLESS || 'true').toLowerCase() !== 'false',
   navTimeoutMs: Number(process.env.NAV_TIMEOUT_MS || 60000),
   countryCode: String(process.env.PHONE_COUNTRY_CODE || '965'),
-  intervalMinutes: Number(process.env.SCRAPE_INTERVAL_MINUTES || 20),
+  // أرقام سنونو دائمة (لا تختفي)، فالسحب مرة/مرتين باليوم كافٍ ويقلّل تسجيل الدخول
+  intervalMinutes: Number(process.env.SCRAPE_INTERVAL_MINUTES || 720),
   maxPages: Number(process.env.MAX_PAGES || 15),
   tzOffsetHours: Number(process.env.TZ_OFFSET_HOURS || 3),
 
