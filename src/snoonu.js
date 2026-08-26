@@ -43,30 +43,24 @@ async function httpJson(url, opts) {
   return { status: res.status, body };
 }
 
-// تسجيل الدخول — يجرّب أشكال جسم الطلب المعروفة حتى ينجح
+// تسجيل الدخول ببريد + باسورد
 async function login(brand) {
   const url = `${API}/api/Auth/LoginWithTwoFactor`;
-  const variants = [
-    { email: brand.email, password: brand.password },
-    { email: brand.email, password: brand.password, twoFactorCode: null },
-    { emailOrUsername: brand.email, password: brand.password },
-    { userName: brand.email, password: brand.password },
-  ];
-  let lastErr = '';
-  for (const payload of variants) {
-    const { status, body } = await httpJson(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const token = body && body.data && body.data.accessToken;
-    if (token) {
-      const buId = findBusinessUnitId(jwtPayload(token) || {});
-      return { token, businessUnitId: buId, raw: body.data };
-    }
-    lastErr = `status ${status} ${body && (body.message || body.error) ? JSON.stringify(body.message || body.error) : ''}`;
+  const { status, body } = await httpJson(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ email: brand.email, password: brand.password }),
+  });
+  const data = body && body.data;
+  if (data && data.accessToken) {
+    const buId = findBusinessUnitId(jwtPayload(data.accessToken) || {});
+    return { token: data.accessToken, businessUnitId: buId, raw: data };
   }
-  throw new Error(`تعذّر تسجيل الدخول (${brand.email}): ${lastErr}`);
+  if (data && data.requiresTwoFactor) {
+    throw new Error(`${brand.name}: الحساب يطلب تحقق ثنائي (2FA) — لا يمكن الدخول الآلي`);
+  }
+  const msg = (body && (body.message || (body.error && body.error.message))) || `HTTP ${status}`;
+  throw new Error(`فشل دخول ${brand.name} (${brand.email}): ${msg}`);
 }
 
 // جلب صفحة طلبات واحدة
