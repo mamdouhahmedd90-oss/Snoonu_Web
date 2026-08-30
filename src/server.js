@@ -63,12 +63,13 @@ small{color:var(--mut)}
 .col span{font-size:10px;color:var(--mut)}
 `;
 
-function layout(title, active, body, withSearch) {
+function layout(title, active, body, withSearch, count) {
   const dl = `<span class="dl"><a class="xls" href="/download.xlsx${qs()}">⬇️ Excel</a><a class="csv" href="/download.csv${qs()}">⬇️ CSV</a></span>`;
   const nav = `<div class="nav"><a href="/${qs()}" class="${active === 'table' ? 'on' : ''}">📋 الجدول</a><a href="/analytics${qs()}" class="${active === 'stats' ? 'on' : ''}">📊 التحليلات</a></div>`;
+  const cnt = count != null ? `<div style="font-size:26px;font-weight:800;color:var(--acc);line-height:1">${count} <span style="font-size:13px;color:var(--mut);font-weight:400">عميل</span></div>` : '';
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${CSS}</style></head>
-<body><div class="bar"><div class="brand"><span>📞</span><div><h1>أرقام عملاء Snoonu</h1></div></div>${nav}${dl}</div>
+<body><div class="bar"><div class="brand"><span>📞</span><div><h1>أرقام عملاء Snoonu</h1>${cnt}</div></div>${nav}${dl}</div>
 <div class="main">${body}</div>${withSearch ? searchScript() : ''}</body></html>`;
 }
 function searchScript() {
@@ -89,7 +90,7 @@ async function tablePage() {
   const note = total > TABLE_LIMIT ? `<small>يُعرض أحدث ${TABLE_LIMIT} من ${total} — التحميل يشمل الكل</small><br><br>` : '';
   const b = `<input id="q" class="search" placeholder="🔎 ابحث بالاسم / الرقم / البراند / العنوان...">${note}
 <div class="wrap"><table id="t"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
-  return layout('Snoonu — الجدول', 'table', b, true);
+  return layout('Snoonu — الجدول', 'table', b, true, total);
 }
 
 function areaOf(addr) {
