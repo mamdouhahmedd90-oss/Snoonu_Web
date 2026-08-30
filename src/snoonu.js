@@ -1,39 +1,42 @@
 'use strict';
 const config = require('./config');
+const db = require('./db');
 
 // ------------------------------------------------------------------
-//  عميل Snoonu API (HTTP فقط، بدون متصفح)
-//  - login: يسجّل دخول ببريد+باسورد ويرجّع accessToken
-//  - businessUnitId: يُستخرج من داخل التوكن (JWT)
-//  - fetchOrdersPage: يجلب صفحة طلبات بالتوكن
+//  عميل Snoonu — حساب ماستر واحد يغطّي كل البراندات (دخول واحد)
+//  - login: يسجّل دخول ويرجّع token + كل businessUnitIds من التوكن
+//  - getBrandName: اسم البراند مقابل الـid (كاش)
+//  - getAuth: يعيد استخدام التوكن (كاش بالذاكرة + قاعدة البيانات) لتقليل الدخول
+//  ترويسات شبيهة بالمتصفح لتبدو الطلبات طبيعية.
 // ------------------------------------------------------------------
 
 const API = config.apiBase.replace(/\/$/, '');
+const H = {
+  'content-type': 'application/json',
+  accept: 'application/json, text/plain, */*',
+  'accept-language': 'en-US,en;q=0.9,ar;q=0.8',
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
+  origin: 'https://snoonu-portal.kwt.snoonu.com',
+  referer: 'https://snoonu-portal.kwt.snoonu.com/',
+};
 
 function b64urlDecode(s) {
   s = String(s).replace(/-/g, '+').replace(/_/g, '/');
   while (s.length % 4) s += '=';
   return Buffer.from(s, 'base64').toString('utf8');
 }
-
-// يقرأ حمولة JWT بدون تحقق (فقط لقراءة businessUnitId)
 function jwtPayload(token) {
   try { return JSON.parse(b64urlDecode(String(token).split('.')[1])); } catch (_) { return null; }
 }
 
-// يبحث بشكل تكراري عن businessUnitId داخل حمولة التوكن
-function findBusinessUnitId(obj) {
-  if (!obj || typeof obj !== 'object') return null;
-  for (const [k, v] of Object.entries(obj)) {
-    if (/businessunitid/i.test(k) && v && (typeof v === 'string' || typeof v === 'number')) {
-      return String(v).split(',')[0].trim();
-    }
-    if (v && typeof v === 'object') {
-      const r = findBusinessUnitId(v);
-      if (r) return r;
-    }
+// يجمع كل الـ BusinessUnitIds من التوكن (الماستر يحوي كل البراندات)
+function allBusinessUnitIds(payload) {
+  const out = [];
+  for (const a of (payload && payload.userAccess) || []) {
+    const b = a.BusinessUnitIds || a.businessUnitIds || '';
+    if (b && b !== '*') out.push(...String(b).split(',').map((x) => x.trim()).filter(Boolean));
   }
-  return null;
+  return [...new Set(out)];
 }
 
 async function httpJson(url, opts) {
@@ -43,28 +46,46 @@ async function httpJson(url, opts) {
   return { status: res.status, body };
 }
 
-// تسجيل الدخول ببريد + باسورد
-async function login(brand) {
-  const url = `${API}/api/Auth/LoginWithTwoFactor`;
-  const { status, body } = await httpJson(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({ email: brand.email, password: brand.password }),
+// تسجيل الدخول
+async function login(account) {
+  const { status, body } = await httpJson(`${API}/api/Auth/LoginWithTwoFactor`, {
+    method: 'POST', headers: H, body: JSON.stringify({ email: account.email, password: account.password }),
   });
   const data = body && body.data;
   if (data && data.accessToken) {
-    const buId = findBusinessUnitId(jwtPayload(data.accessToken) || {});
-    return { token: data.accessToken, businessUnitId: buId, raw: data };
+    return { token: data.accessToken, businessUnitIds: allBusinessUnitIds(jwtPayload(data.accessToken)), raw: data };
   }
-  if (data && data.requiresTwoFactor) {
-    throw new Error(`${brand.name}: الحساب يطلب تحقق ثنائي (2FA) — لا يمكن الدخول الآلي`);
-  }
+  if (data && data.requiresTwoFactor) throw new Error(`${account.name || account.email}: يتطلب تحقق ثنائي (2FA)`);
   const msg = (body && (body.message || (body.error && body.error.message))) || `HTTP ${status}`;
-  throw new Error(`فشل دخول ${brand.name} (${brand.email}): ${msg}`);
+  throw new Error(`فشل دخول (${account.email}): ${msg}`);
 }
 
-// كاش للتوكن لكل براند (لتقليل عدد مرات تسجيل الدخول = أهدأ على حماية سنونو)
-const _authCache = new Map();
+// كاش أسماء البراندات
+const _brandNames = new Map();
+async function getBrandName(token, buid) {
+  if (_brandNames.has(buid)) return _brandNames.get(buid);
+  try {
+    const { body } = await httpJson(`${API}/api/pps/Brands/${buid}`, { headers: { authorization: `Bearer ${token}`, ...H } });
+    const d = (body && (body.data || body)) || {};
+    const name = d.name || d.title || d.nameEn || buid;
+    _brandNames.set(buid, name);
+    return name;
+  } catch (_) { return buid; }
+}
+
+// جلب صفحة طلبات لبراند (businessUnitId)
+async function fetchOrdersPage(token, businessUnitId, pageOffset) {
+  const params = new URLSearchParams({ pageSize: String(config.pageSize), pageOffset: String(pageOffset) });
+  if (businessUnitId) params.set('businessUnitId', businessUnitId);
+  const { status, body } = await httpJson(`${API}/api/Order?${params.toString()}`, {
+    headers: { authorization: `Bearer ${token}`, ...H },
+  });
+  if (status >= 400 || !body) throw new Error(`Order API status ${status}`);
+  return Array.isArray(body.data) ? body.data : [];
+}
+
+// ---------- إعادة استخدام التوكن (كاش ذاكرة + قاعدة بيانات) ----------
+let _mem = null; // { token, businessUnitIds, expMs }
 
 function tokenExpMs(token, rawExpiration) {
   const p = jwtPayload(token);
@@ -72,36 +93,22 @@ function tokenExpMs(token, rawExpiration) {
   if (rawExpiration) { const t = Date.parse(rawExpiration); if (!Number.isNaN(t)) return t; }
   return Date.now() + 60 * 60 * 1000;
 }
+function valid(a) { return a && a.token && Date.now() < a.expMs - 5 * 60 * 1000; }
 
-// يرجّع توكن صالح من الكاش، أو يسجّل دخول جديد فقط لو انتهى/قارب على الانتهاء
-async function getAuth(brand) {
-  const cached = _authCache.get(brand.email);
-  if (cached && Date.now() < cached.expMs - 5 * 60 * 1000) {
-    return { token: cached.token, businessUnitId: cached.businessUnitId, cached: true };
+async function getAuth(account) {
+  if (valid(_mem)) return { ..._mem, cached: true };
+  // جرّب من قاعدة البيانات (يبقى محفوظ عبر عمليات النشر)
+  if (db.isEnabled()) {
+    try {
+      const saved = await db.getState('snoonu_auth');
+      if (valid(saved)) { _mem = saved; return { ...saved, cached: true }; }
+    } catch (_) {}
   }
-  const auth = await login(brand);
-  _authCache.set(brand.email, {
-    token: auth.token,
-    businessUnitId: auth.businessUnitId,
-    expMs: tokenExpMs(auth.token, auth.raw && auth.raw.expiration),
-  });
-  return { ...auth, cached: false };
+  // دخول جديد
+  const a = await login(account);
+  _mem = { token: a.token, businessUnitIds: a.businessUnitIds, expMs: tokenExpMs(a.token, a.raw && a.raw.expiration) };
+  if (db.isEnabled()) { try { await db.setState('snoonu_auth', _mem); } catch (_) {} }
+  return { ..._mem, cached: false };
 }
 
-// جلب صفحة طلبات واحدة
-async function fetchOrdersPage(token, businessUnitId, pageOffset) {
-  const params = new URLSearchParams({
-    pageSize: String(config.pageSize),
-    pageOffset: String(pageOffset),
-  });
-  if (businessUnitId) params.set('businessUnitId', businessUnitId);
-  const url = `${API}/api/Order?${params.toString()}`;
-  const { status, body } = await httpJson(url, {
-    headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
-  });
-  if (status >= 400 || !body) throw new Error(`Order API status ${status}`);
-  const data = Array.isArray(body.data) ? body.data : [];
-  return data;
-}
-
-module.exports = { login, getAuth, fetchOrdersPage, jwtPayload, findBusinessUnitId };
+module.exports = { login, getAuth, getBrandName, fetchOrdersPage, jwtPayload, allBusinessUnitIds };

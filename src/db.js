@@ -47,8 +47,24 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone);
     CREATE INDEX IF NOT EXISTS idx_contacts_brand ON contacts(brand);
     CREATE INDEX IF NOT EXISTS idx_contacts_last_seen ON contacts(last_seen DESC);
+    CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value JSONB, updated TIMESTAMPTZ DEFAULT now());
   `);
   inited = true;
+}
+
+// تخزين حالة (مثل التوكن) لإعادة استخدامها عبر عمليات النشر
+async function getState(key) {
+  await init();
+  const r = await getPool().query('SELECT value FROM app_state WHERE key=$1', [key]);
+  return r.rows[0] ? r.rows[0].value : null;
+}
+async function setState(key, value) {
+  await init();
+  await getPool().query(
+    `INSERT INTO app_state (key, value, updated) VALUES ($1,$2,now())
+     ON CONFLICT (key) DO UPDATE SET value=$2, updated=now()`,
+    [key, JSON.stringify(value)]
+  );
 }
 
 async function upsertMany(records, nowIso) {
@@ -112,4 +128,4 @@ async function allRecords() {
   }));
 }
 
-module.exports = { init, upsertMany, count, allRecords, isEnabled: () => !!DATABASE_URL };
+module.exports = { init, upsertMany, count, allRecords, getState, setState, isEnabled: () => !!DATABASE_URL };

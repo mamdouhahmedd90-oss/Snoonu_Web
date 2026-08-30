@@ -1,65 +1,55 @@
 'use strict';
 const config = require('./config');
 const store = require('./store');
-const { getAuth, fetchOrdersPage } = require('./snoonu');
+const { getAuth, getBrandName, fetchOrdersPage } = require('./snoonu');
 const { extractOrders } = require('./extract');
 
 function log(...a) { console.log(`[${new Date().toISOString()}]`, ...a); }
 
-async function scrapeBrand(brand) {
+async function scrapeUnit(token, buid, brandName) {
   const recs = [];
-  let token, businessUnitId, cached;
-  try {
-    const auth = await getAuth(brand);
-    token = auth.token;
-    businessUnitId = auth.businessUnitId;
-    cached = auth.cached;
-  } catch (e) {
-    log(`  ✗ ${brand.name}: ${e.message}`);
-    return { brand: brand.name, records: [], ok: false };
-  }
-
   let pages = 0;
   for (let offset = 0; pages < config.maxPages; offset += config.pageSize, pages++) {
     let data;
-    try {
-      data = await fetchOrdersPage(token, businessUnitId, offset);
-    } catch (e) {
-      log(`  ${brand.name}: خطأ في الصفحة ${pages + 1}: ${e.message}`);
-      break;
-    }
+    try { data = await fetchOrdersPage(token, buid, offset); }
+    catch (e) { log(`  ${brandName}: خطأ في الصفحة ${pages + 1}: ${e.message}`); break; }
     if (!data.length) break;
-    recs.push(...extractOrders({ data }, brand.name));
-    if (data.length < config.pageSize) break; // آخر صفحة
+    recs.push(...extractOrders({ data }, brandName));
+    if (data.length < config.pageSize) break;
     await new Promise((r) => setTimeout(r, 250));
   }
-  log(`  ✓ ${brand.name}: ${recs.length} رقم (${pages + 1} صفحة)${cached ? ' [توكن مخزّن]' : ' [دخول جديد]'}`);
-  return { brand: brand.name, records: recs, ok: true };
+  return recs;
 }
 
 async function runOnce() {
   await store.init();
-  if (!config.brands.length) {
-    throw new Error('لا توجد بيانات براندات. انسخ brands.example.json إلى brands.json واملأ الباسوردات، أو اضبط SNOONU_BRANDS.');
-  }
+  const master = config.brands[0];
+  if (!master) throw new Error('لا يوجد حساب ماستر. ضعه في brands.json أو متغيّر SNOONU_BRANDS.');
 
-  log(`بدء السحب — ${config.brands.length} براند`);
+  const auth = await getAuth(master); // دخول واحد يغطّي كل البراندات
+  log(`تسجيل الدخول ${auth.cached ? '[توكن مخزّن]' : '[دخول جديد]'} | عدد البراندات: ${auth.businessUnitIds.length}`);
+
   const all = [];
-  let okBrands = 0;
-  for (const brand of config.brands) {
-    const res = await scrapeBrand(brand);
-    if (res.ok) okBrands++;
-    all.push(...res.records);
+  let ok = 0;
+  for (const buid of auth.businessUnitIds) {
+    const name = await getBrandName(auth.token, buid);
+    try {
+      const recs = await scrapeUnit(auth.token, buid, name);
+      all.push(...recs);
+      ok++;
+      log(`  ✓ ${name}: ${recs.length} رقم`);
+    } catch (e) {
+      log(`  ✗ ${name}: ${e.message}`);
+    }
   }
 
   const now = new Date().toISOString();
-  const upres = await store.upsertMany(all, now);
-
-  log(`الإجمالي: براندات ناجحة ${okBrands}/${config.brands.length} | أرقام ملتقطة ${all.length} | جديد ${upres.added} | الإجمالي بالمخزن ${upres.total} | التخزين: ${store.usingDb ? 'Postgres' : 'JSON'}`);
-  return { ...upres, okBrands };
+  const up = await store.upsertMany(all, now);
+  log(`الإجمالي: براندات ناجحة ${ok}/${auth.businessUnitIds.length} | أرقام ملتقطة ${all.length} | جديد ${up.added} | الإجمالي بالمخزن ${up.total} | التخزين: ${store.usingDb ? 'Postgres' : 'JSON'}`);
+  return { ...up, okBrands: ok };
 }
 
-module.exports = { runOnce, scrapeBrand };
+module.exports = { runOnce, scrapeUnit };
 
 if (require.main === module) {
   runOnce().then(() => process.exit(0)).catch((e) => { console.error('خطأ:', e.message); process.exit(1); });
